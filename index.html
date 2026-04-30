@@ -349,7 +349,7 @@ input:focus,select:focus{outline:none;border-color:var(--navy)}
 
 const CLIENT_ID = '956237969585-9lj18eg3j4ui3khqjh5r5f1hm761vs9f.apps.googleusercontent.com';
 const SHEET_ID  = '1MmvSpbW-z-h_h4ru2VB0HtZZHEzkz05nNaas-aEQG6E';
-const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets';
+const SCOPES    = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
 const BASE      = 'https://sheets.googleapis.com/v4/spreadsheets/'+SHEET_ID;
 const LOCAL_KEY = 'pfin_oauth_v1';
 const SHEETS    = {TX:'Transactions',GOALS:'Goals',DEBTS:'Debts',BUDGET:'Budget'};
@@ -426,26 +426,38 @@ function requestToken(){
 
 async function onSignedIn(){
   try{
-    const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+accessToken}});
-    if(!r.ok) throw new Error('Token invalid');
-    const info=await r.json();
     // Store token with 55min expiry
     localStorage.setItem('gtoken',accessToken);
     localStorage.setItem('gtoken_expiry',String(Date.now()+55*60*1000));
-    localStorage.setItem('guser',JSON.stringify({name:info.given_name||info.name||'',picture:info.picture||''}));
-    // Show app, hide login
+
+    // Show app immediately
     g('login-screen').style.display='none';
     g('app-screen').style.display='block';
-    g('user-name').textContent=info.given_name||info.name||'';
-    if(info.picture) g('user-avatar').src=info.picture;
+
+    // Try to get user info (non-blocking)
+    try{
+      const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+accessToken}});
+      if(r.ok){
+        const info=await r.json();
+        g('user-name').textContent=info.given_name||info.name||'You';
+        if(info.picture) g('user-avatar').src=info.picture;
+      }else{
+        g('user-name').textContent='Signed in';
+      }
+    }catch(e){
+      g('user-name').textContent='Signed in';
+    }
+
     const now=new Date();
     g('top-period').textContent=now.toLocaleString('default',{month:'long',year:'numeric'});
     g('tx-date').value=today();
     g('sw-date').value=today();
-    // Load local first for instant display
+
+    // Load local data first
     const local=loadLocal();
     if(local){S=local;renderTx();}
-    // Then sync from Google Sheets
+
+    // Sync from Google Sheets
     try{
       await ensureSheets();
       await loadFromSheets();
