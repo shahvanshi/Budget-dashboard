@@ -387,58 +387,78 @@ function loadGIS(){
     const s=document.createElement('script');
     s.src='https://accounts.google.com/gsi/client';
     s.onload=resolve;
+    s.onerror=resolve;
     document.head.appendChild(s);
   });
 }
 
 async function initAuth(){
   await loadGIS();
+
+  // Always init tokenClient first
   tokenClient=google.accounts.oauth2.initTokenClient({
     client_id:CLIENT_ID,
     scope:SCOPES,
     callback:(resp)=>{
-      if(resp.error){setStatus('error','⬤ Auth error');return;}
+      if(resp.error){
+        console.error('Auth error:',resp);
+        return;
+      }
       accessToken=resp.access_token;
       onSignedIn();
     }
   });
 
-  // Check if we have a stored token
+  // Then check if we have a valid stored token
   const stored=localStorage.getItem('gtoken');
-  if(stored){
+  const storedExpiry=localStorage.getItem('gtoken_expiry');
+  if(stored && storedExpiry && Date.now() < parseInt(storedExpiry)){
     accessToken=stored;
     onSignedIn();
   }
 }
 
 function requestToken(){
-  tokenClient.requestAccessToken({prompt:'consent'});
+  localStorage.removeItem('gtoken');
+  localStorage.removeItem('gtoken_expiry');
+  tokenClient.requestAccessToken({prompt:'select_account'});
 }
 
 async function onSignedIn(){
-  // Get user info
   try{
     const r=await fetch('https://www.googleapis.com/oauth2/v3/userinfo',{headers:{Authorization:'Bearer '+accessToken}});
     if(!r.ok) throw new Error('Token invalid');
     const info=await r.json();
+    // Store token with 55min expiry
     localStorage.setItem('gtoken',accessToken);
-    g('user-name').textContent=info.given_name||info.name||'';
-    g('user-avatar').src=info.picture||'';
+    localStorage.setItem('gtoken_expiry',String(Date.now()+55*60*1000));
+    localStorage.setItem('guser',JSON.stringify({name:info.given_name||info.name||'',picture:info.picture||''}));
+    // Show app, hide login
     g('login-screen').style.display='none';
     g('app-screen').style.display='block';
+    g('user-name').textContent=info.given_name||info.name||'';
+    if(info.picture) g('user-avatar').src=info.picture;
     const now=new Date();
     g('top-period').textContent=now.toLocaleString('default',{month:'long',year:'numeric'});
     g('tx-date').value=today();
     g('sw-date').value=today();
+    // Load local first for instant display
     const local=loadLocal();
     if(local){S=local;renderTx();}
-    await ensureSheets();
-    await loadFromSheets();
-    renderTx();
+    // Then sync from Google Sheets
+    try{
+      await ensureSheets();
+      await loadFromSheets();
+      renderTx();
+    }catch(sheetErr){
+      console.error('Sheets error:',sheetErr);
+      setStatus('error','⬤ Sheets error — using local data');
+    }
   }catch(e){
+    console.error('Sign in failed:',e);
     localStorage.removeItem('gtoken');
+    localStorage.removeItem('gtoken_expiry');
     accessToken=null;
-    setStatus('error','⬤ Session expired');
     g('login-screen').style.display='flex';
     g('app-screen').style.display='none';
   }
